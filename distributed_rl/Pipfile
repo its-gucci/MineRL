@@ -1,0 +1,22 @@
+[[source]]
+url = "https://pypi.org/simple"
+verify_ssl = true
+name = "pypi"
+
+[packages]
+redis = "*"
+pillow = "*"
+gym = "*"
+atari-py = ">=0.1.1"
+visdom = "*"
+numpy = "*"
+"fabric3" = "*"
+"lz4" = "*"
+"boto3" = "*"
+pyyaml = "*"
+"73bf4ee" = {file = "http://download.pytorch.org/whl/cu100/torch-1.0.0-cp36-cp36m-linux_x86_64.whl"}
+
+[dev-packages]
+
+[requires]
+python_version = "3.6"
