@@ -37,9 +37,9 @@ def main():
         from distributed_rl.r2d3.actor import Actor
         nstep_return = 5
         actor = Actor(args.name, env,
-                      models.DuelingLSTMDQN(env.action_space.n, 1,
+                      models.DuelingLSTMDQN(9, 1,
                                             nstep_return=nstep_return).to(device),
-                      models.DuelingLSTMDQN(env.action_space.n, 1,
+                      models.DuelingLSTMDQN(9, 1,
                                             nstep_return=nstep_return).to(device),
                       vis, hostname=args.redisserver, eps_decay=args.eps_decay,
                       device=device)

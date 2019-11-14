@@ -49,10 +49,10 @@ def main():
         from distributed_rl.ape_x.r2d3_learner import Learner
         batch_size = 64
         nstep_return = 5
-        model = models.DuelingLSTMDQN(env.action_space.n, batch_size,
+        model = models.DuelingLSTMDQN(9, batch_size,
                                       nstep_return=nstep_return).to(device)
         learner = Learner(model,
-                          models.DuelingLSTMDQN(env.action_space.n, batch_size,
+                          models.DuelingLSTMDQN(9, batch_size,
                                                 nstep_return=nstep_return).to(device),
                           optim.Adam(model.parameters(), lr=0.00048, eps=1.0e-3),
                           vis, replay_size=args.replaysize, hostname=args.redisserver,
