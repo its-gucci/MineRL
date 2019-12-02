@@ -49,12 +49,18 @@ def main():
         from distributed_rl.ape_x.r2d3_learner import Learner
         batch_size = 64
         nstep_return = 5
-        model = models.DuelingLSTMDQN(9, batch_size,
+        model = models.DuelingLSTMDQN2(7, batch_size,
                                       nstep_return=nstep_return).to(device)
+        g = models.GNetwork(10).to(device)
+        f = models.FNetwork(7, 10).to(device)
         learner = Learner(model,
-                          models.DuelingLSTMDQN(9, batch_size,
+                          models.DuelingLSTMDQN2(7, batch_size,
                                                 nstep_return=nstep_return).to(device),
+                          g,
+                          f,
                           optim.Adam(model.parameters(), lr=0.00048, eps=1.0e-3),
+                          optim.Adam(g.parameters(), lr=0.0001, eps=1.0e-3),
+                          optim.Adam(f.parameters(), lr=0.0001, eps=1.0e-3),
                           vis, replay_size=args.replaysize, hostname=args.redisserver,
                           use_memory_compress=True)
         learner.optimize_loop(batch_size=batch_size, gamma=0.997**nstep_return,

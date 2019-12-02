@@ -10,7 +10,7 @@ from ..libs import replay_memory, utils
 class Actor(actor.Actor):
     EPS_BASE = 0.4
     EPS_ALPHA = 7.0
-    def __init__(self, name, env, policy_net, target_net, vis, hostname='localhost',
+    def __init__(self, name, env, policy_net, target_net, g, f, vis, hostname='localhost',
                  batch_size=20, nstep_return=5, gamma=0.997,
                  clip=lambda x: x,
                  target_update=400, eps_decay=10000000,
@@ -22,6 +22,22 @@ class Actor(actor.Actor):
         self._target_net.load_state_dict(self._policy_net.state_dict())
         self._target_net.eval()
         self._n_burn_in = self._policy_net.n_burn_in
+
+        # need to add action representation networks g, f
+        self._g = g
+        self._f = f
+
+    def _pull_gparams(self):
+        params = self._connect.get('gparams')
+        if not params is None:
+            print("[%s] Sync gparams." % self._name)
+            self._f.load_state_dict(utils.loads(params))
+
+    def _pull_fparams(self):
+        params = self._connect.get('fparams')
+        if not params is None:
+            print("[%s] Sync fparams." % self._name)
+            self._f.load_state_dict(utils.loads(params))
 
     def run(self, n_overlap=40, n_sequence=80):
         assert n_sequence > 1, "n_sequence must be more than 1."
@@ -39,13 +55,30 @@ class Actor(actor.Actor):
             recurrent_state_buffer.append(self._policy_net.get_state())
             # Select and perform an action
             eps = self.EPS_BASE ** (1.0 + t / (self._eps_decay - 1.0) * self.EPS_ALPHA)
-            action = utils.epsilon_greedy(torch.from_numpy(state).unsqueeze(0).to(self._device),
+            action = utils.epsilon_greedy(torch.from_numpy(np.reshape(state['pov'].copy(), (3, 64, 64))).type(torch.FloatTensor).unsqueeze(0).to(self._device),
                                           self._policy_net, eps)
-            next_state, reward, done, _ = self._env.step(action.item())
+            ##########################################################
+            # Need to remap actions that come our of our policy net
+            ##########################################################
+            # new action representation approach
+            # TODO: fix hard-coded embed_dim
+            mrl_action = torch.zeros(1, 10)
+            mrl_action[0, action] = 1
+            mrl_action = self._f(mrl_action.float().to(self._device))
+
+            # old action mapping code
+            mrl_action = utils.minerl_embed_to_action(mrl_action, self._env)
+
+            # perform action and get next state
+            next_state, reward, done, _ = self._env.step(mrl_action)
+            ##########################################################
+            # End of change
+            ##########################################################
             sum_rwd += reward
             reward = torch.tensor([self._clip(reward)])
             done = torch.tensor([float(done)])
-            step_buffer.append(utils.Transition(torch.from_numpy(state), action, reward, done=done))
+            step_buffer.append(utils.Transition(torch.from_numpy(np.reshape(state['pov'].copy(), (3, 64, 64))).type(torch.FloatTensor), 
+                action, reward, done=done))
             if len(step_buffer) == step_buffer.maxlen:
                 r_nstep = sum([gamma_nsteps[-(i + 2)] * step_buffer[i].reward for i in range(step_buffer.maxlen)])
                 sequence_buffer.append(utils.Transition(step_buffer[0].state,
@@ -58,7 +91,8 @@ class Actor(actor.Actor):
             elif done and len(sequence_buffer) > n_total_overlap:
                 self._local_memory.push(utils.Sequence(sequence_buffer,
                                                        recurrent_state_buffer[0]))
-            self._vis.image(utils.preprocess(self._env.env._get_image()), win=self._win1)
+            # disable visdom images for now
+            # self._vis.image(utils.preprocess(self._env.env._get_image()), win=self._win1)
             state = next_state.copy()
             if done:
                 self._vis.line(X=np.array([n_episode]), Y=np.array([sum_rwd]),
@@ -85,4 +119,13 @@ class Actor(actor.Actor):
 
             if t > 0 and t % self._target_update == 0:
                 self._pull_params()
+                ################################################################################
+                # Need to pull g, f params so our action representations are synced
+                ################################################################################ 
+                self._pull_gparams()
+                self._pull_fparams()
+                ################################################################################
+                # End of code modification
+                ################################################################################
+
                 self._target_net.load_state_dict(self._policy_net.state_dict())

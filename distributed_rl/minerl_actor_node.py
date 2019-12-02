@@ -37,10 +37,12 @@ def main():
         from distributed_rl.r2d3.actor import Actor
         nstep_return = 5
         actor = Actor(args.name, env,
-                      models.DuelingLSTMDQN(9, 1,
+                      models.DuelingLSTMDQN2(7, 1,
                                             nstep_return=nstep_return).to(device),
-                      models.DuelingLSTMDQN(9, 1,
+                      models.DuelingLSTMDQN2(7, 1,
                                             nstep_return=nstep_return).to(device),
+                      models.GNetwork(10).to(device),
+                      models.FNetwork(7, 10).to(device),
                       vis, hostname=args.redisserver, eps_decay=args.eps_decay,
                       device=device)
     else:
