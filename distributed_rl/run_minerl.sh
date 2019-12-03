@@ -23,7 +23,7 @@ if $visdom; then
     sleep 2
 fi
 
-if $leaner; then
+if $learner; then
     if [ -z "$actor_device" ]; then
 	python minerl_learner_node.py -r $redis_server -v $visdom_server -a $algorithm &
 	pids="$pids $!"
