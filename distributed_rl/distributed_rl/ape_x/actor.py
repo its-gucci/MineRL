@@ -42,7 +42,8 @@ class Actor(object):
         self._policy_net = policy_net
         self._policy_net.eval()
         self._device = device
-        self._win1 = self._vis.image(utils.preprocess(self._env.env._get_image()))
+        # disable visdom images for now
+        # self._win1 = self._vis.image(utils.preprocess(self._env.env._get_image()))
         self._win2 = self._vis.line(X=np.array([0]), Y=np.array([0.0]),
                                     opts=dict(title='Score %s' % self._name))
         self._local_memory = replay_memory.ReplayMemory(1000)
@@ -75,7 +76,8 @@ class Actor(object):
                 r_nstep = sum([gamma_nsteps[-(i + 2)] * step_buffer[i].reward for i in range(step_buffer.maxlen)])
                 self._local_memory.push(utils.Transition(step_buffer[0].state, step_buffer[0].action, r_nstep,
                                                          step_buffer[-1].next_state, step_buffer[-1].done))
-            self._vis.image(utils.preprocess(self._env.env._get_image()), win=self._win1)
+            # disable visdom image for now
+            # self._vis.image(utils.preprocess(self._env.env._get_image()), win=self._win1)
             state = next_state.copy()
             if done:
                 self._vis.line(X=np.array([n_episode]), Y=np.array([sum_rwd]),
