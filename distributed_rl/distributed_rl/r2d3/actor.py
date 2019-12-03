@@ -95,6 +95,8 @@ class Actor(actor.Actor):
             # self._vis.image(utils.preprocess(self._env.env._get_image()), win=self._win1)
             state = next_state.copy()
             if done:
+                # print reward for episode to the command line
+                print("Total reward: {}".format(sum_rwd))
                 self._vis.line(X=np.array([n_episode]), Y=np.array([sum_rwd]),
                                win=self._win2, update='append')
                 state = self._env.reset()
