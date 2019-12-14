@@ -95,6 +95,7 @@ def main():
         # convert states, actions to torch tensors
         current_state = torch.from_numpy(current_state['pov'].copy()).permute(0, 3, 1, 2).type(torch.FloatTensor)
         next_state = torch.from_numpy(next_state['pov'].copy()).permute(0, 3, 1, 2).type(torch.FloatTensor)
+        camera, dis = utils.split_action(action)
         
         # get action from our g network, since we want to pre-train in action representation space
         action_rep = g(current_state, next_state)
@@ -103,7 +104,7 @@ def main():
         policy_act = pi(current_state)
 
         # compute loss, which is just the negative log likelihood
-        nll = -policy_act.log_prob(action_rep)
+        nll = -policy_act.log_prob(action_rep).mean()
 
         # update policy network params
         pi_opt.zero_grad()
@@ -114,15 +115,18 @@ def main():
         net_output = f(g(current_state, next_state))
 
         # split output into continuous, discrete
+        continuous = net_output[:, :2]
         discrete = net_output[:, 2:]
 
-        # calculate softmax loss (TODO: add continuous action loss)
-        action_rep_loss = -F.log_softmax(discrete)[:, act].mean()
-
-        # update f, g params
+        # calculate loss, which is a mixed log_prob + MSE loss
+        dis = torch.from_numpy(dis).type(torch.FloatTensor)
+        camera = torch.from_numpy(camera).type(torch.FloatTensor)
+        loss = -torch.where(dis>0, F.log_softmax(discrete, dim=-1), dis).mean() + F.mse_loss(continuous, camera).mean()
+          
+        # train f, g networks
         g_opt.zero_grad()
         f_opt.zero_grad()
-        action_rep_loss.backward()
+        loss.backward()
         g_opt.step()
         f_opt.step()
     print('Took {} seconds'.format(time.time() - t1))

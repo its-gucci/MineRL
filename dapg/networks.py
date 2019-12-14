@@ -48,7 +48,7 @@ class PolicyNet(nn.Module):
     x = F.relu(self.conv3(x))
     x = self.linear(x.reshape(-1,1024))
     a, b = torch.split(x, self.embed_dim, dim=-1)
-    return torch.distributions.normal(a, nn.Softplus(b))
+    return torch.distributions.normal.Normal(a, F.softplus(b))
 
   def get_params(self):
     params = np.concatenate([p.contiguous().view(-1).data.numpy() for p in self.trainable_params])
