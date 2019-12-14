@@ -34,12 +34,33 @@ class PolicyNet(nn.Module):
 		self.conv1 = nn.Conv2d(input_channels, 32, kernel_size=8, stride=4)
 		self.conv2 = nn.Conv2d(32, 64, kernel_size=4, stride=2)
 		self.conv3 = nn.Conv2d(64, 64, kernel_size=3, stride=1)
-		self.linear = nn.Linear(64, embed_dim)
+		self.linear = nn.Linear(64, 2*embed_dim)
+
+		self.embed_dim = embed_dim
+
+		self.trainable_params = list(self.parameters())
+
+		self.param_sizes = [p.data.numpy().size for p in self.trainable_params]
 
 	def forward(self, x):
 		x = F.relu(self.conv1(x))
 		x = F.relu(self.conv2(x))
 		x = F.relu(self.conv3(x))
 		x = self.linear(x)
-		return x
+		a, b = torch.split(x, self.embed_dim, dim=-1)
+		return torch.distributions.normal(a, nn.Softplus(b))
+
+	def get_params(self):
+		params = np.concatenate([p.contiguous().view(-1).data.numpy()
+                                 for p in self.trainable_params])
+        return params.copy()
+
+    def set_params(self):
+    	current_idx = 0
+    	for idx, param in enumerate(self.trainable_params):
+            vals = new_params[current_idx:current_idx + self.param_sizes[idx]]
+            vals = vals.reshape(self.param_shapes[idx])
+            param.data = torch.from_numpy(vals).float()
+            current_idx += self.param_sizes[idx]
+
 

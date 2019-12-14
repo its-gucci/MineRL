@@ -38,35 +38,24 @@ def convert_action(action):
 	new[int(tmp, 2)] = 1
 	return new
 
-import numpy as np
+def get_minerl_action(action_rep, f, env, eps=0.05):
+	act = f(action_rep).numpy()
+	action = env.action_space.noop()
 
-#######################################################################
-# Code borrowed from 
-# https://github.com/aravindr93/mjrl/blob/master/mjrl/utils/cg_solve.py
-#######################################################################
-def cg_solve(f_Ax, b, x_0=None, cg_iters=10, residual_tol=1e-10):
-	"""
-	conjugate gradient solver
-	"""
-    x = np.zeros_like(b) #if x_0 is None else x_0
-    r = b.copy() #if x_0 is None else b-f_Ax(x_0)
-    p = r.copy()
-    rdotr = r.dot(r)
+	# attack is always one
+	action['attack'] = 1
 
-    for i in range(cg_iters):
-        z = f_Ax(p)
-        v = rdotr / p.dot(z)
-        x += v * p
-        r -= v * z
-        newrdotr = r.dot(r)
-        mu = newrdotr / rdotr
-        p = r + mu * p
+	# update camera action
+	action['camera'] = act[:2]
 
-        rdotr = newrdotr
-        if rdotr < residual_tol:
-            break
-
-    return x
-#######################################################################
-# End
-#######################################################################
+	# epsilon-greedy action update
+	if np.random() > eps:
+		i = np.argmax(act[2:])
+	else:
+		i = np.random.randint(0, 16)
+	action_string = '{0:04b}'.format(i)
+	action['forward'] = int(action_string[0])
+	action['jump'] = int(action_string[1])
+	action['left'] = int(action_string[2])
+	action['right'] = int(action_string[3])
+	return action, i
