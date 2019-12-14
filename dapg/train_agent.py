@@ -1,5 +1,6 @@
 import argparse
 import os
+import time
 import numpy as np
 from scipy.sparse.linalg import cg
 
@@ -20,10 +21,10 @@ def main():
   parser.add_argument('-k', '--timeskip', type=int, default=1, help='k parameter for action rep resentations.')
   parser.add_argument('-l', '--load', action='store_true', help='Set true to load models from modeldir.')
   parser.add_argument('--train', action='store_false', help='Set to true to train model.')
-  parser.add_argument('--pretrain', type=int, default=10000, help='Number of pretraining epochs.')
-  parser.add_arugment('--bc', type=int, default=10000, help='Number of behavioral cloning steps.')
-  parser.add_argument('--episodes', type=int, default=10000, help='Number of training episodes.')
-  parser.add_argument('--datadir', type=str, default='../distributed_rl/minerl_data/dataset/', help='Path to demonstration data.')
+  parser.add_argument('--pretrain', type=int, default=1000, help='Number of pretraining epochs.')
+  parser.add_argument('--bc', type=int, default=1000, help='Number of behavioral cloning steps.')
+  parser.add_argument('--episodes', type=int, default=1000, help='Number of training episodes.')
+  parser.add_argument('--datadir', type=str, default='../distributed_rl/minerl_data', help='Path to demonstration data.')
   parser.add_argument('--modeldir', type=str, default='/models', help='Path to model storage folder.')
   parser.add_argument('--outdir', type=str, default='/output', help='Path to store output data.')
   parser.add_argument('--eval', action='store_true', help='Evaluate a trained model.')
@@ -35,10 +36,11 @@ def main():
   gamma = 0.995
   lam_0 = 1e-2
   lam_1 = 0.95
+  n_action = 18
 
   g = networks.GNetwork(args.dim, k=args.timeskip)
   f = networks.FNetwork(n_action, args.dim, k=args.timeskip)
-  pi = networks.PolicyNetwork(args.dim)
+  pi = networks.PolicyNet(args.dim)
 
   g_opt = torch.optim.Adam(g.parameters(), lr=0.0001, eps=1.0e-3)
   f_opt = torch.optim.Adam(f.parameters(), lr=0.0001, eps=1.0e-3)
@@ -55,12 +57,14 @@ def main():
 
   # pre-train action representations on demonstration data
   if args.train:
-    data = minerl.data.make(args.datadir, args.env)
+    print('Starting action representation pre-training...')
+    t1 = time.time()
+    data = minerl.data.make(args.env, args.datadir)
     for i in range(args.pretrain):
       for current_state, action, reward, next_state, done in data.sarsd_iter(num_epochs=1):
         # convert states to torch tensors
-        current_state = torch.from_numpy(np.reshape(current_state['pov'].copy(), (3, 64, 64))).type(torch.FloatTensor)
-        next_state = torch.from_numpy(np.reshape(next_state['pov'].copy(), (3, 64, 64))).type(torch.FloatTensor)
+        current_state = torch.from_numpy(current_state['pov'].copy()).permute(0, 3, 1, 2).type(torch.FloatTensor)
+        next_state = torch.from_numpy(next_state['pov'].copy()).permute(0, 3, 1, 2).type(torch.FloatTensor)
         camera, dis = utils.split_action(action)
         
         # feed through network
@@ -71,22 +75,26 @@ def main():
         discrete = net_output[:, 2:]
 
         # calculate loss, which is a mixed log_prob + MSE loss
-        loss = -F.log_softmax(discrete, dim=-1)[:, dis].mean() + F.mse_loss(continuous, camera).mean()
+        dis = torch.from_numpy(dis).type(torch.FloatTensor)
+        camera = torch.from_numpy(camera).type(torch.FloatTensor)
+        loss = -torch.where(dis>0, F.log_softmax(discrete, dim=-1), dis).mean() + F.mse_loss(continuous, camera).mean()
           
-          # train f, g networks
-          g_opt.zero_grad()
-          f_opt.zero_grad()
-          loss.backward()
-          g_opt.step()
-          f_opt.step()
-
+        # train f, g networks
+        g_opt.zero_grad()
+        f_opt.zero_grad()
+        loss.backward()
+        g_opt.step()
+        f_opt.step()
+    print('Took {} seconds'.format(time.time() - t1))
 
     # pre-train policy network on demonstration data + action reps with behavioral cloning
+    print('Start behavioral cloning pre-training...')
+    t1 = time.time()
     for i in range(args.bc):
       for current_state, action, reward, next_state, done in data.sarsd_iter(num_epochs=1):
         # convert states, actions to torch tensors
-        current_state = torch.from_numpy(np.reshape(current_state['pov'].copy(), (3, 64, 64))).type(torch.FloatTensor)
-        next_state = torch.from_numpy(np.reshape(next_state['pov'].copy(), (3, 64, 64))).type(torch.FloatTensor)
+        current_state = torch.from_numpy(current_state['pov'].copy()).permute(0, 3, 1, 2).type(torch.FloatTensor)
+        next_state = torch.from_numpy(next_state['pov'].copy()).permute(0, 3, 1, 2).type(torch.FloatTensor)
         
         # get action from our g network, since we want to pre-train in action representation space
         action_rep = g(current_state, next_state)
@@ -102,11 +110,30 @@ def main():
         nll.backward()
         pi_opt.step()
 
+        # train f, g further
+        net_output = f(g(current_state, next_state))
+
+        # split output into continuous, discrete
+        discrete = net_output[:, 2:]
+
+        # calculate softmax loss (TODO: add continuous action loss)
+        action_rep_loss = -F.log_softmax(discrete)[:, act].mean()
+
+        # update f, g params
+        g_opt.zero_grad()
+        f_opt.zero_grad()
+        action_rep_loss.backward()
+        g_opt.step()
+        f_opt.step()
+    print('Took {} seconds'.format(time.time() - t1))
+
     # train policy network with action representation updates + DAPG
+    print('Start training model...')
+    t1 = time.time()
     for i in range(args.episodes):
       # sample a single trajectory using the policy network
       obs = env.reset()
-      state = torch.from_numpy(np.reshape(obs['pov'].copy(), (3, 64, 64))).type(torch.FloatTensor)
+      state = torch.from_numpy(obs['pov'].copy()).permute(0, 3, 1, 2).type(torch.FloatTensor)
       done = False
       observations = []
       actions = []
@@ -116,7 +143,7 @@ def main():
         action = pi(state)
         minerl_action, act = utils.get_minerl_action(action, f, args.env)
         obs, reward, done, _ = env.step(minerl_action)
-        state = torch.from_numpy(np.reshape(obs['pov'].copy(), (3, 64, 64))).type(torch.FloatTensor)
+        state = torch.from_numpy(obs['pov'].copy()).permute(0, 3, 1, 2).type(torch.FloatTensor)
         observations.append(state)
         actions.append(action)
         rewards.append(reward)
@@ -131,11 +158,11 @@ def main():
         action_rep_loss = -F.log_softmax(discrete)[:, act].mean()
 
         # update f, g params
-          g_opt.zero_grad()
-          f_opt.zero_grad()
-          action_rep_loss.backward()
-          g_opt.step()
-          f_opt.step()
+        g_opt.zero_grad()
+        f_opt.zero_grad()
+        action_rep_loss.backward()
+        g_opt.step()
+        f_opt.step()
 
       # convert to np arrays
       observations = np.array(observations)
@@ -149,10 +176,10 @@ def main():
       # need a demonstration trajectory as well
       demo_obs = []
       demo_actions = []
-      for current_state, action, reward, next_state, done in data.sarsd_iter(num_epochs=1):
+      for current_state, action, reward, next_state, done in data.sarsd_iter(num_epochs=1, max_len=1):
         # convert states, actions to torch tensors
-        current_state = torch.from_numpy(np.reshape(current_state['pov'].copy(), (3, 64, 64))).type(torch.FloatTensor)
-        next_state = torch.from_numpy(np.reshape(current_state['pov'].copy(), (3, 64, 64))).type(torch.FloatTensor)
+        current_state = torch.from_numpy(current_state['pov'].copy()).permute(0, 3, 1, 2).float()
+        next_state = torch.from_numpy(next_state['pov'].copy()).permute(0, 3, 1, 2).float()
         action_rep = g(current_state, next_state)
         demo_obs.append(current_state)
         demo_actions.append(action_rep)
@@ -190,7 +217,8 @@ def main():
       'f_state_dict': f.state_dict(),
       'g_state_dict': g.state_dict(),
       'pi_state_dcit': pi.state_dict(),
-      }, os.path.join(args.modeldir, 'saved_model.pth')) 
+      }, os.path.join(args.modeldir, 'saved_model.pth'))
+    print('Took {} seconds'.format(time.time() - t1))
 
   if args.eval:
     all_rewards = []
@@ -215,7 +243,7 @@ def main():
       'all_rewards': all_rewards,
       'avg_rewards': avg_rewards,
       'avg_reward': np.mean(avg_reward),
-      'std_reward': np.std(avg_reward)
+      'std_reward': np.std(avg_reward),
     }
     np.save(os.path.join(args.outdir, 'results.npy'), data)
   return
