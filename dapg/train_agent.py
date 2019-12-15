@@ -137,17 +137,17 @@ def main():
     for i in range(args.episodes):
       # sample a single trajectory using the policy network
       obs = env.reset()
-      state = torch.from_numpy(obs['pov'].copy()).permute(0, 3, 1, 2).type(torch.FloatTensor)
+      state = torch.from_numpy(obs['pov'].copy()).unsqueeze(0).permute(0, 3, 1, 2).type(torch.FloatTensor)
       done = False
-      observations = []
+      observations = [state]
       actions = []
       rewards = []
       while not done:
         # sample action embedding from policy, then convert to MineRL action
-        action = pi(state)
-        minerl_action, act = utils.get_minerl_action(action, f, args.env)
+        action = pi(state).mean
+        minerl_action, act = utils.get_minerl_action(action, f, env)
         obs, reward, done, _ = env.step(minerl_action)
-        state = torch.from_numpy(obs['pov'].copy()).permute(0, 3, 1, 2).type(torch.FloatTensor)
+        state = torch.from_numpy(obs['pov'].copy()).unsqueeze(0).permute(0, 3, 1, 2).type(torch.FloatTensor)
         observations.append(state)
         actions.append(action)
         rewards.append(reward)
@@ -169,7 +169,7 @@ def main():
         f_opt.step()
 
       # convert to np arrays
-      observations = np.array(observations)
+      observations = torch.cat(observations, dim=0).numpy()
       actions = np.array(actions)
       rewards = np.array(rewards)
 
@@ -180,7 +180,7 @@ def main():
       # need a demonstration trajectory as well
       demo_obs = []
       demo_actions = []
-      for current_state, action, reward, next_state, done in data.sarsd_iter(num_epochs=1, max_len=1):
+      for current_state, action, reward, next_state, done in data.sarsd_iter(num_epochs=1, max_sequence_len=1):
         # convert states, actions to torch tensors
         current_state = torch.from_numpy(current_state['pov'].copy()).permute(0, 3, 1, 2).float()
         next_state = torch.from_numpy(next_state['pov'].copy()).permute(0, 3, 1, 2).float()

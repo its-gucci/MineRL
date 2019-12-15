@@ -29,7 +29,7 @@ def convert_action(action):
     return new
 
 def get_minerl_action(action_rep, f, env, eps=0.05):
-    act = f(action_rep).numpy()
+    act = f(action_rep).detach().numpy()[0]
     action = env.action_space.noop()
 
     # attack is always one
@@ -39,7 +39,7 @@ def get_minerl_action(action_rep, f, env, eps=0.05):
     action['camera'] = act[:2]
 
     # epsilon-greedy action update
-    if np.random() > eps:
+    if np.random.rand() > eps:
         i = np.argmax(act[2:])
     else:
         i = np.random.randint(0, 16)
