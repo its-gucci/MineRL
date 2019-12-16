@@ -20,13 +20,15 @@ def main():
   parser.add_argument('-d', '--dim', type=int, default=10, help='Embedding dimension for action representations.')
   parser.add_argument('-k', '--timeskip', type=int, default=1, help='k parameter for action rep resentations.')
   parser.add_argument('-l', '--load', action='store_true', help='Set true to load models from modeldir.')
+  parser.add_argument('--report', type=int, default=100, help='How often to report statistics.')
+  parser.add_argument('--batch', action='store_true', help='Whether to do updates in batches or not.')
   parser.add_argument('--train', action='store_false', help='Set to true to train model.')
   parser.add_argument('--pretrain', type=int, default=1000, help='Number of pretraining epochs.')
   parser.add_argument('--bc', type=int, default=1000, help='Number of behavioral cloning steps.')
   parser.add_argument('--episodes', type=int, default=1000, help='Number of training episodes.')
   parser.add_argument('--datadir', type=str, default='../distributed_rl/minerl_data', help='Path to demonstration data.')
-  parser.add_argument('--modeldir', type=str, default='/models', help='Path to model storage folder.')
-  parser.add_argument('--outdir', type=str, default='/output', help='Path to store output data.')
+  parser.add_argument('--modeldir', type=str, default='models', help='Path to model storage folder.')
+  parser.add_argument('--outdir', type=str, default='output', help='Path to store output data.')
   parser.add_argument('--eval', action='store_true', help='Evaluate a trained model.')
   parser.add_argument('--eval-runs', type=int, default=100, help='Number of evaluation runs.')
   args = parser.parse_args()
@@ -47,6 +49,7 @@ def main():
   pi_opt = torch.optim.Adam(pi.parameters(), lr=0.0001, eps=1.0e-3)
 
   if args.load:
+    print('Loading model from {}'.format(args.modeldir))
     checkpoint = torch.load(os.path.join(args.modeldir, 'saved_model.pth'))
     g.load_state_dict(checkpoint['g_state_dict'])
     f.load_state_dict(checkpoint['f_state_dict'])
@@ -55,11 +58,13 @@ def main():
   # prepare environment
   env = gym.make(args.env)
 
+  # make demonstration data
+  data = minerl.data.make(args.env, args.datadir)
+
   # pre-train action representations on demonstration data
   if args.train:
     print('Starting action representation pre-training...')
     t1 = time.time()
-    data = minerl.data.make(args.env, args.datadir)
     for i in range(args.pretrain):
       for current_state, action, reward, next_state, done in data.sarsd_iter(num_epochs=1):
         # convert states to torch tensors
@@ -130,6 +135,13 @@ def main():
         g_opt.step()
         f_opt.step()
     print('Took {} seconds'.format(time.time() - t1))
+
+    # save model at the end of training
+    torch.save({
+      'f_state_dict': f.state_dict(),
+      'g_state_dict': g.state_dict(),
+      'pi_state_dcit': pi.state_dict(),
+      }, os.path.join(args.modeldir, 'only_bc.pth'))
 
     # train policy network with action representation updates + DAPG
     print('Start training model...')
@@ -225,31 +237,38 @@ def main():
     print('Took {} seconds'.format(time.time() - t1))
 
   if args.eval:
+    print('Starting evaluation...')
+    t1 = time.time()
     all_rewards = []
     for i in range(args.eval_runs):
-      rewards = []
+      rewards = [0]
       total_reward = 0
+      counter = 0
       obs = env.reset()
-      state = torch.from_numpy(np.reshape(obs['pov'].copy(), (3, 64, 64))).type(torch.FloatTensor)
+      state = torch.from_numpy(obs['pov'].copy()).unsqueeze(0).permute(0, 3, 1, 2).type(torch.FloatTensor)
       done = False
       while not done:
-        action = pi(state)
-        minerl_action, act = utils.get_minerl_action(action, f, args.env)
+        action = pi(state).mean
+        minerl_action, act = utils.get_minerl_action(action, f, env)
         obs, reward, done, _ = env.step(minerl_action)
-        total_reward += reward 
-        rewards.append(reward)
-      print("Total Reward for Episode {}: {}".format(i ,total_reward))
+        state = torch.from_numpy(obs['pov'].copy()).unsqueeze(0).permute(0, 3, 1, 2).type(torch.FloatTensor)
+        total_reward += reward
+        counter += 1
+        if counter % args.report == 0:
+          rewards.append(total_reward - rewards[-1])
+      print("Total Reward for Episode {}: {}".format(i, total_reward))
       all_rewards.append(rewards)
     all_rewards = np.array(all_rewards)
     avg_rewards = np.mean(all_rewards, axis=-1) 
-    print("Final score: {} +- {}".format(np.mean(avg_reward), np.std(avg_reward)))
+    print("Final score: {} +- {}".format(np.mean(avg_rewards), np.std(avg_rewards)))
     data = {
       'all_rewards': all_rewards,
       'avg_rewards': avg_rewards,
-      'avg_reward': np.mean(avg_reward),
-      'std_reward': np.std(avg_reward),
+      'avg_reward': np.mean(avg_rewards),
+      'std_reward': np.std(avg_rewards),
     }
     np.save(os.path.join(args.outdir, 'results.npy'), data)
+    print('Took {} seconds'.format(time.time() - t1))
   return
 
 if __name__ == '__main__':
