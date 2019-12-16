@@ -20,6 +20,7 @@ def main():
   parser.add_argument('-d', '--dim', type=int, default=10, help='Embedding dimension for action representations.')
   parser.add_argument('-k', '--timeskip', type=int, default=1, help='k parameter for action rep resentations.')
   parser.add_argument('-l', '--load', action='store_true', help='Set true to load models from modeldir.')
+  parser.add_argument('--modelname', type=str, default='saved_model.pth', help='Name of model to load.')
   parser.add_argument('--report', type=int, default=100, help='How often to report statistics.')
   parser.add_argument('--batch', action='store_true', help='Whether to do updates in batches or not.')
   parser.add_argument('--train', action='store_false', help='Set to true to train model.')
@@ -50,10 +51,12 @@ def main():
 
   if args.load:
     print('Loading model from {}'.format(args.modeldir))
-    checkpoint = torch.load(os.path.join(args.modeldir, 'saved_model.pth'))
+    t1 = time.time()
+    checkpoint = torch.load(os.path.join(args.modeldir, args.modelname))
     g.load_state_dict(checkpoint['g_state_dict'])
     f.load_state_dict(checkpoint['f_state_dict'])
     pi.load_state_dict(checkpoint['pi_state_dcit'])
+    print('Took {} seconds'.format(time.time() - t1))
 
   # prepare environment
   env = gym.make(args.env)
@@ -141,7 +144,7 @@ def main():
       'f_state_dict': f.state_dict(),
       'g_state_dict': g.state_dict(),
       'pi_state_dcit': pi.state_dict(),
-      }, os.path.join(args.modeldir, 'only_bc.pth'))
+      }, os.path.join(args.modeldir, 'only_pretrained_model.pth'))
 
     # train policy network with action representation updates + DAPG
     print('Start training model...')
@@ -171,7 +174,7 @@ def main():
         discrete = net_output[:, 2:]
 
         # calculate softmax loss (TODO: add continuous action loss)
-        action_rep_loss = -F.log_softmax(discrete)[:, act].mean()
+        action_rep_loss = -F.log_softmax(discrete, dim=-1)[:, act].mean()
 
         # update f, g params
         g_opt.zero_grad()
@@ -233,7 +236,7 @@ def main():
       'f_state_dict': f.state_dict(),
       'g_state_dict': g.state_dict(),
       'pi_state_dcit': pi.state_dict(),
-      }, os.path.join(args.modeldir, 'saved_model.pth'))
+      }, os.path.join(args.modeldir, 'trained_model.pth'))
     print('Took {} seconds'.format(time.time() - t1))
 
   if args.eval:
