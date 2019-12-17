@@ -167,24 +167,26 @@ def main():
           observations.append(state)
           actions.append(action)
           rewards.append(reward)
-        state = torch.from_numpy(obs['pov'].copy()).unsqueeze(0).permute(0, 3, 1, 2).type(torch.FloatTensor)
+        new_state = torch.from_numpy(obs['pov'].copy()).unsqueeze(0).permute(0, 3, 1, 2).type(torch.FloatTensor)
+        
+        # train f, g further
+        net_output = f(g(state, new_state))
 
-        if len(observations) >= 2:
-          # train f, g further
-          net_output = f(g(observations[-2], observations[-1]))
+        # split output into continuous, discrete
+        discrete = net_output[:, 2:]
 
-          # split output into continuous, discrete
-          discrete = net_output[:, 2:]
+        # calculate softmax loss (TODO: add continuous action loss)
+        action_rep_loss = -F.log_softmax(discrete, dim=-1)[:, act].mean()
 
-          # calculate softmax loss (TODO: add continuous action loss)
-          action_rep_loss = -F.log_softmax(discrete, dim=-1)[:, act].mean()
+        # update f, g params
+        g_opt.zero_grad()
+        f_opt.zero_grad()
+        action_rep_loss.backward()
+        g_opt.step()
+        f_opt.step()
 
-          # update f, g params
-          g_opt.zero_grad()
-          f_opt.zero_grad()
-          action_rep_loss.backward()
-          g_opt.step()
-          f_opt.step()
+        # update current state
+        state = new_state
 
       # convert to np arrays
       observations = torch.cat(observations, dim=0)
@@ -208,8 +210,8 @@ def main():
           demo_actions.append(action_rep)
 
       # convert to np array
-      demo_obs = torch.cat(demo_obs, axis=0)
-      demo_actions = torch.cat(demo_actions)
+      demo_obs = torch.cat(demo_obs, dim=0)
+      demo_actions = torch.cat(demo_actions, dim=0)
 
       # create all observations, all actions
       all_obs = torch.cat([observations, demo_obs], dim=0)
@@ -223,8 +225,8 @@ def main():
       # calculate g, the REINFORCE gradient
       likelihood = pi(all_obs).log_prob(all_actions)
       likelihood_grad = torch.autograd.grad(likelihood, pi.trainable_params, grad_outputs=torch.ones_like(likelihood))
-      print(torch.cat(list(likelihood_grad)), dim=0)
-      reinforce_grad = torch.mean(likelihood_grad * all_adv, dim=0).numpy()
+      likelihood_grad = torch.cat([t.view(-1) for t in likelihood_grad], dim=0)
+      reinforce_grad = torch.mean(likelihood_grad * torch.from_numpy(all_adv), dim=0).numpy()
 
       # create Fischer Information matrix
       FIM = np.matmul(likelihood_grad, likelihood_grad.T)/all_adv.shape[0]
