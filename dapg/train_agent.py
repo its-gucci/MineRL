@@ -40,6 +40,7 @@ def main():
   lam_0 = 1e-2
   lam_1 = 0.95
   n_action = 18
+  ratio = 0.001
 
   g = networks.GNetwork(args.dim, k=args.timeskip)
   f = networks.FNetwork(n_action, args.dim, k=args.timeskip)
@@ -154,7 +155,7 @@ def main():
       obs = env.reset()
       state = torch.from_numpy(obs['pov'].copy()).unsqueeze(0).permute(0, 3, 1, 2).type(torch.FloatTensor)
       done = False
-      observations = [state]
+      observations = []
       actions = []
       rewards = []
       while not done:
@@ -162,30 +163,32 @@ def main():
         action = pi(state).mean
         minerl_action, act = utils.get_minerl_action(action, f, env)
         obs, reward, done, _ = env.step(minerl_action)
+        if np.random.rand() < ratio or len(observations) < 2:
+          observations.append(state)
+          actions.append(action)
+          rewards.append(reward)
         state = torch.from_numpy(obs['pov'].copy()).unsqueeze(0).permute(0, 3, 1, 2).type(torch.FloatTensor)
-        observations.append(state)
-        actions.append(action)
-        rewards.append(reward)
 
-        # train f, g further
-        net_output = f(g(observations[-2], observations[-1]))
+        if len(observations) >= 2:
+          # train f, g further
+          net_output = f(g(observations[-2], observations[-1]))
 
-        # split output into continuous, discrete
-        discrete = net_output[:, 2:]
+          # split output into continuous, discrete
+          discrete = net_output[:, 2:]
 
-        # calculate softmax loss (TODO: add continuous action loss)
-        action_rep_loss = -F.log_softmax(discrete, dim=-1)[:, act].mean()
+          # calculate softmax loss (TODO: add continuous action loss)
+          action_rep_loss = -F.log_softmax(discrete, dim=-1)[:, act].mean()
 
-        # update f, g params
-        g_opt.zero_grad()
-        f_opt.zero_grad()
-        action_rep_loss.backward()
-        g_opt.step()
-        f_opt.step()
+          # update f, g params
+          g_opt.zero_grad()
+          f_opt.zero_grad()
+          action_rep_loss.backward()
+          g_opt.step()
+          f_opt.step()
 
       # convert to np arrays
-      observations = torch.cat(observations, dim=0).numpy()
-      actions = np.array(actions)
+      observations = torch.cat(observations, dim=0)
+      actions = torch.cat(actions, dim=0)
       rewards = np.array(rewards)
 
       # need to whiten advantages? this is how it's done in original DAPG code
@@ -200,25 +203,27 @@ def main():
         current_state = torch.from_numpy(current_state['pov'].copy()).permute(0, 3, 1, 2).float()
         next_state = torch.from_numpy(next_state['pov'].copy()).permute(0, 3, 1, 2).float()
         action_rep = g(current_state, next_state)
-        demo_obs.append(current_state)
-        demo_actions.append(action_rep)
+        if np.random.rand() < ratio or len(demo_obs) < 2:
+          demo_obs.append(current_state)
+          demo_actions.append(action_rep)
 
       # convert to np array
-      demo_obs = np.array(demo_obs)
-      demo_actions = np.array(demo_actions)
+      demo_obs = torch.cat(demo_obs, axis=0)
+      demo_actions = torch.cat(demo_actions)
 
       # create all observations, all actions
-      all_obs = np.concatenate([observations, demo_obs])
-      all_actions = np.concatenate([actions, demo_actions])
+      all_obs = torch.cat([observations, demo_obs], dim=0)
+      all_actions = torch.cat([actions, demo_actions], dim=0)
 
       # unsure about whether this is correct, but this is how it's done in the 
       # original DAPG code
-      demo_adv = lam_0 * (self.lam_1 ** i) * np.ones(demo_obs.shape[0])
-      all_adv = 1e-2*np.concatenate([advantages/(np.std(advantages) + 1e-8), demo_adv])
+      demo_adv = lam_0 * (lam_1 ** i) * np.ones(demo_obs.shape[0])
+      all_adv = 1e-2*np.concatenate([rewards/(np.std(rewards) + 1e-8), demo_adv])
 
       # calculate g, the REINFORCE gradient
       likelihood = pi(all_obs).log_prob(all_actions)
-      likelihood_grad = torch.autograd.grad(likelihood, pi.trainable_params).numpy()
+      likelihood_grad = torch.autograd.grad(likelihood, pi.trainable_params, grad_outputs=torch.ones_like(likelihood))
+      print(torch.cat(list(likelihood_grad)), dim=0)
       reinforce_grad = torch.mean(likelihood_grad * all_adv, dim=0).numpy()
 
       # create Fischer Information matrix
@@ -258,17 +263,17 @@ def main():
         total_reward += reward
         counter += 1
         if counter % args.report == 0:
-          rewards.append(total_reward - rewards[-1])
+          rewards.append(total_reward - sum(rewards))
       print("Total Reward for Episode {}: {}".format(i, total_reward))
       all_rewards.append(rewards)
     all_rewards = np.array(all_rewards)
-    avg_rewards = np.mean(all_rewards, axis=-1) 
-    print("Final score: {} +- {}".format(np.mean(avg_rewards), np.std(avg_rewards)))
+    tot_rewards = np.sum(all_rewards, axis=-1) 
+    print("Final score: {} +- {}".format(np.mean(tot_rewards), np.std(tot_rewards)))
     data = {
       'all_rewards': all_rewards,
-      'avg_rewards': avg_rewards,
-      'avg_reward': np.mean(avg_rewards),
-      'std_reward': np.std(avg_rewards),
+      'avg_rewards': tot_rewards,
+      'avg_reward': np.mean(tot_rewards),
+      'std_reward': np.std(tot_rewards),
     }
     np.save(os.path.join(args.outdir, 'results.npy'), data)
     print('Took {} seconds'.format(time.time() - t1))
