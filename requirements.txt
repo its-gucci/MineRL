@@ -13,7 +13,7 @@ getch==1.0
 gym==0.15.4
 humanfriendly==4.18
 idna==2.8
-ipython==7.10.1
+ipython==7.16.3
 ipython-genutils==0.2.0
 jedi==0.15.1
 jsonpatch==1.24
